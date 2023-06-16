@@ -132,6 +132,7 @@ extern "C" {
  #   define WOLFBOOT_SHA_HDR HDR_SHA256
  #   define WOLFBOOT_SHA_DIGEST_SIZE (32)
  #   define image_hash image_sha256
+ #   define stepSlotHash stepSlotSha256
  #   define key_hash key_sha256
  #elif defined(WOLFBOOT_HASH_SHA384)
  #   ifndef WOLFBOOT_SHA_BLOCK_SIZE

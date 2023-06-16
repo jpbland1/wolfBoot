@@ -471,6 +471,24 @@ static uint8_t *get_img_hdr(struct wolfBoot_image *img)
 
 #if defined(WOLFBOOT_HASH_SHA256)
 #include <wolfssl/wolfcrypt/sha256.h>
+static int stepSlotSha256(uint8_t* slotBuf, uint8_t* hash)
+{
+    int ret = -1;
+    wc_Sha256 sha[1];
+
+    ret = wc_InitSha256(sha);
+
+    if (ret == 0) {
+        /* hash the slot */
+        wc_Sha256Update(sha, slotBuf,
+            WOLFBOOT_SECTOR_SIZE - WOLFBOOT_SHA_DIGEST_SIZE);
+    }
+
+    wc_Sha256Final(sha, hash);
+
+    return ret;
+}
+
 static int image_sha256(struct wolfBoot_image *img, uint8_t *hash)
 {
 #if defined(WOLFBOOT_TPM) && defined(WOLFBOOT_HASH_TPM)
@@ -1487,3 +1505,158 @@ static int keyslot_id_by_sha(const uint8_t *hint)
     return -1;
 }
 #endif
+void clearSteps()
+{
+    /* each step slot should have its own physical sector */
+    uint32_t slot0 = WOLFBOOT_PARTITION_SWAP_ADDRESS +
+        WOLFBOOT_SECTOR_SIZE;
+    uint32_t slot1 = WOLFBOOT_PARTITION_SWAP_ADDRESS +
+        WOLFBOOT_SECTOR_SIZE * 2;
+
+#ifdef EXT_FLASH
+    ext_flash_erase(slot0, WOLFBOOT_SECTOR_SIZE);
+    ext_flash_erase(slot1, WOLFBOOT_SECTOR_SIZE);
+#else
+    hal_flash_erase(slot0, WOLFBOOT_SECTOR_SIZE);
+    hal_flash_erase(slot1, WOLFBOOT_SECTOR_SIZE);
+#endif
+}
+
+void loadState(uint8_t* state, uint32_t len)
+{
+    /* slot 1 is just a backup, get the state from slot 0 */
+#ifdef EXT_FLASH
+    ext_flash_read(WOLFBOOT_PARTITION_SWAP_ADDRESS +
+        WOLFBOOT_SECTOR_SIZE + sizeof(uint32_t), state, len);
+#else
+    XMEMCPY(state, (uint8_t*)WOLFBOOT_PARTITION_SWAP_ADDRESS +
+        WOLFBOOT_SECTOR_SIZE + sizeof(uint32_t), len);
+#endif
+}
+
+int saveStep(uint32_t step, uint8_t* state, uint32_t len)
+{
+    uint8_t slotHash[WOLFBOOT_SHA_DIGEST_SIZE];
+    /* each step slot should have its own physical sector */
+    uint32_t slot0Addr = WOLFBOOT_PARTITION_SWAP_ADDRESS +
+        WOLFBOOT_SECTOR_SIZE;
+    uint32_t slot1Addr = WOLFBOOT_PARTITION_SWAP_ADDRESS +
+        WOLFBOOT_SECTOR_SIZE * 2;
+    uint8_t* slot0Buf = (uint8_t*)WOLFBOOT_PARTITION_SWAP_ADDRESS +
+        WOLFBOOT_SECTOR_SIZE;
+#ifdef EXT_FLASH
+    uint8_t buffer[WOLFBOOT_SECTOR_SIZE];
+#endif
+
+    /* write to slot0, slot1 will have the previous step that can be repeated */
+    /* if this operation is interrupted */
+#ifdef EXT_FLASH
+    ext_flash_erase(slot0Addr, WOLFBOOT_SECTOR_SIZE);
+    ext_flash_write(slot0Addr, (uint8_t*)&step, sizeof(uint32_t));
+
+    /* if we have state then write it, otherwise leave the state as is */
+    if (state != NULL) {
+        ext_flash_write(slot0Addr + sizeof(uint32_t), state, len);
+    }
+
+    /* read slot0 so we can hash it */
+    ext_flash_read(slot0Addr, buffer, WOLFBOOT_SECTOR_SIZE);
+    slot0Buf = buffer;
+#else
+    hal_flash_erase(slot0Addr, WOLFBOOT_SECTOR_SIZE);
+    hal_flash_write(slot0Addr, (uint8_t*)&step, sizeof(uint32_t));
+
+    /* if we have state then write it, otherwise leave the state as is */
+    if (state != NULL) {
+        hal_flash_write(slot0Addr + sizeof(uint32_t), state, len);
+    }
+#endif
+
+    /* hash slot 0 */
+    if (stepSlotHash(slot0Buf, slotHash) != 0)
+        return -1;
+
+#ifdef EXT_FLASH
+    /* write the hash */
+    ext_flash_write(slot0Addr + WOLFBOOT_SECTOR_SIZE - WOLFBOOT_SHA_DIGEST_SIZE,
+        slotHash, WOLFBOOT_SHA_DIGEST_SIZE);
+
+    /* re-read with the digest */
+    ext_flash_read(slot0Addr, buffer, WOLFBOOT_SECTOR_SIZE);
+
+    /* copy to slot 1, at this point a power interruption won't affect slot 0 */
+    ext_flash_erase(slot1Addr, WOLFBOOT_SECTOR_SIZE);
+    ext_flash_write(slot1Addr, buffer, WOLFBOOT_SECTOR_SIZE);
+#else
+    /* write the hash */
+    hal_flash_write(slot0Addr + WOLFBOOT_SECTOR_SIZE - WOLFBOOT_SHA_DIGEST_SIZE,
+        slotHash, WOLFBOOT_SHA_DIGEST_SIZE);
+
+    /* copy to slot 1, at this point a power interruption won't affect slot 0 */
+    hal_flash_erase(slot1, WOLFBOOT_SECTOR_SIZE);
+    hal_flash_write(slot1, (uint8_t*)WOLFBOOT_PARTITION_SWAP_ADDRESS +
+        WOLFBOOT_SECTOR_SIZE, WOLFBOOT_SECTOR_SIZE);
+#endif
+
+    return 0;
+}
+
+int readStep()
+{
+    uint8_t slotHash[WOLFBOOT_SHA_DIGEST_SIZE];
+    /* each step slot should have its own physical sector */
+    uint32_t slot0Addr = WOLFBOOT_PARTITION_SWAP_ADDRESS +
+        WOLFBOOT_SECTOR_SIZE;
+    uint32_t slot1Addr = WOLFBOOT_PARTITION_SWAP_ADDRESS +
+        WOLFBOOT_SECTOR_SIZE * 2;
+    uint8_t* slot0Buf = (uint8_t*)WOLFBOOT_PARTITION_SWAP_ADDRESS +
+        WOLFBOOT_SECTOR_SIZE;
+    uint8_t* slot1Buf = (uint8_t*)WOLFBOOT_PARTITION_SWAP_ADDRESS +
+        WOLFBOOT_SECTOR_SIZE * 2;
+#ifdef EXT_FLASH
+    uint8_t buffer[WOLFBOOT_SECTOR_SIZE];
+
+    ext_flash_read(slot0Addr, buffer, WOLFBOOT_SECTOR_SIZE);
+    slot0Buf = buffer;
+#endif
+
+    /* verify slot integrity */
+    if (stepSlotHash(slot0Buf, slotHash) == 0 &&
+        XMEMCMP(slotHash,
+            slot0Buf + WOLFBOOT_SECTOR_SIZE - WOLFBOOT_SHA_DIGEST_SIZE,
+            WOLFBOOT_SHA_DIGEST_SIZE) == 0) {
+        /* if slot 0 is good, copy to slot 1 */
+#ifdef EXT_FLASH
+        ext_flash_erase(slot1Addr, WOLFBOOT_SECTOR_SIZE);
+        ext_flash_write(slot1Addr, slot0Buf, WOLFBOOT_SECTOR_SIZE);
+#else
+        hal_flash_erase(slot1Addr, WOLFBOOT_SECTOR_SIZE);
+        hal_flash_write(slot1Addr, slot0Buf, WOLFBOOT_SECTOR_SIZE);
+#endif
+
+        return *((uint32_t*)slot0Buf);
+    }
+
+#ifdef EXT_FLASH
+    ext_flash_read(slot1Addr, buffer, WOLFBOOT_SECTOR_SIZE);
+    slot1Buf = buffer;
+#endif
+
+    if (stepSlotHash(slot1Buf, slotHash) == 0 &&
+        XMEMCMP(slotHash,
+            slot1Buf + WOLFBOOT_SECTOR_SIZE - WOLFBOOT_SHA_DIGEST_SIZE,
+            WOLFBOOT_SHA_DIGEST_SIZE) == 0) {
+        /* if slot 1 is good, copy to slot 0 */
+#ifdef EXT_FLASH
+        ext_flash_erase(slot1Addr, WOLFBOOT_SECTOR_SIZE);
+        ext_flash_write(slot1Addr, buffer, WOLFBOOT_SECTOR_SIZE);
+#else
+        hal_flash_erase(slot0Addr, WOLFBOOT_SECTOR_SIZE);
+        hal_flash_write(slot0Addr, slot1Buf, WOLFBOOT_SECTOR_SIZE);
+#endif
+
+        return *((uint32_t*)slot1Buf);
+    }
+
+    return -1;
+}

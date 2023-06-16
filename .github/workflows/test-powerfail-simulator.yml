@@ -41,7 +41,7 @@ jobs:
 
       - name: Rebuild wolfboot.elf
         run: |
-          make test-sim-internal-flash-with-update
+          make clean && make test-sim-internal-flash-with-update
 
       - name: Run update-revert test
         run: |
@@ -49,11 +49,19 @@ jobs:
 
       - name: Rebuild wolfboot.elf
         run: |
-          make test-sim-internal-flash-with-update
+          make clean && make test-sim-internal-flash-with-update
 
       - name: Run update-revert test with power failures
         run: |
           tools/scripts/sim-update-powerfail-resume.sh
+
+      - name: Rebuild wolfboot.elf
+        run: |
+          make clean && make test-sim-internal-flash-with-update
+
+      - name: Run update-revert during state change test with power failures
+        run: |
+          tools/scripts/sim-update-powerfail-state-resume.sh
 
 
       # TEST with NVM_WRITEONCE enabled
@@ -84,7 +92,7 @@ jobs:
 
       - name: Rebuild wolfboot.elf
         run: |
-          make test-sim-internal-flash-with-update
+          make clean && make test-sim-internal-flash-with-update
 
       - name: Run update-revert test (NVM_WRITEONCE)
         run: |
@@ -92,11 +100,19 @@ jobs:
 
       - name: Rebuild wolfboot.elf
         run: |
-          make test-sim-internal-flash-with-update
+          make clean && make test-sim-internal-flash-with-update
 
       - name: Run update-revert test with power failures (NVM_WRITEONCE)
         run: |
           tools/scripts/sim-update-powerfail-resume.sh
+
+      - name: Rebuild wolfboot.elf
+        run: |
+          make clean && make test-sim-internal-flash-with-update
+
+      - name: Run update-revert during state change test with power failures
+        run: |
+          tools/scripts/sim-update-powerfail-state-resume.sh
 
       # TEST with DELTA updates
 
@@ -126,7 +142,7 @@ jobs:
 
       - name: Rebuild wolfboot.elf
         run: |
-          make test-sim-internal-flash-with-delta-update
+          make clean && make test-sim-internal-flash-with-delta-update
 
       - name: Run update-revert test (DELTA)
         run: |
@@ -134,11 +150,19 @@ jobs:
 
       - name: Rebuild wolfboot.elf
         run: |
-          make test-sim-internal-flash-with-delta-update
+          make clean && make test-sim-internal-flash-with-delta-update
 
       - name: Run update-revert test with power failures (DELTA)
         run: |
           tools/scripts/sim-update-powerfail-resume.sh
+
+      - name: Rebuild wolfboot.elf
+        run: |
+          make clean && make test-sim-internal-flash-with-delta-update
+
+      - name: Run update-revert during state change test with power failures
+        run: |
+          tools/scripts/sim-update-powerfail-state-resume.sh
 
 
      # TEST with encryption (aes128)
@@ -183,6 +207,14 @@ jobs:
         run: |
           tools/scripts/sim-update-powerfail-resume.sh
 
+      - name: Rebuild wolfboot.elf
+        run: |
+          make clean && make test-sim-external-flash-with-enc-update
+
+      - name: Run update-revert during state change test with power failures
+        run: |
+          tools/scripts/sim-update-powerfail-state-resume.sh
+
      # TEST with encryption (aes128) and delta updates
 
       - name: make clean
@@ -225,3 +257,10 @@ jobs:
         run: |
           tools/scripts/sim-update-powerfail-resume.sh
 
+      - name: Rebuild wolfboot.elf
+        run: |
+          make clean && make test-sim-external-flash-with-enc-delta-update
+
+      - name: Run update-revert during state change test with power failures
+        run: |
+          tools/scripts/sim-update-powerfail-state-resume.sh

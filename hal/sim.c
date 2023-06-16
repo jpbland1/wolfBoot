@@ -36,6 +36,8 @@ static uint8_t *ram_base;
 static uint8_t *flash_base;
 
 uint32_t erasefail_address = 0xFFFFFFFF;
+int failSlot = -1;
+int failCount = -1;
 
 #define INTERNAL_FLASH_FILE "./internal_flash.dd"
 #define EXTERNAL_FLASH_FILE "./external_flash.dd"
@@ -111,11 +113,28 @@ int hal_flash_erase(uint32_t address, int len)
 
     /* implicit cast abide compiler warning */
     fprintf(stderr,"hal_flash_erase addr %x len %d\n", address, len);
-    if (address == erasefail_address) {
-        fprintf(stderr,"POWER FAILURE\n");
-        /* Corrupt page */
-        memset(ptr + address, 0xEE, len);
-        exit(0);
+    if (
+        address == erasefail_address ||
+        /* if address is within slot 0 */
+        (
+        failSlot == 0 && address >= WOLFBOOT_PARTITION_SWAP_ADDRESS +
+        WOLFBOOT_SECTOR_SIZE && address < WOLFBOOT_PARTITION_SWAP_ADDRESS +
+        WOLFBOOT_SECTOR_SIZE * 2
+        ) ||
+        /* if address is within slot 1 */
+        (
+        failSlot == 1 && address >= WOLFBOOT_PARTITION_SWAP_ADDRESS +
+        WOLFBOOT_SECTOR_SIZE * 2
+        )
+    ) {
+        failCount--;
+
+        if (failSlot < 0 || failCount == 0) {
+            fprintf(stderr,"POWER FAILURE\n");
+            /* Corrupt page */
+            memset(ptr + address, 0xEE, len);
+            exit(0);
+        }
     }
     memset(ptr + address, 0xff, len);
     return 0;
@@ -136,7 +155,7 @@ void hal_init(void)
 #ifdef EXT_FLASH
     ret = mmap_file(EXTERNAL_FLASH_FILE, (uint8_t*)ARCH_FLASH_OFFSET + 0x10000000, &flash_base);
     if (ret != 0) {
-        fprintf(stderr,"failed to load internal flash file\n");
+        fprintf(stderr,"failed to load external flash file\n");
         exit(-1);
     }
 #endif /* EXT_FLASH */
@@ -145,6 +164,14 @@ void hal_init(void)
         if (strcmp(main_argv[i], "powerfail") == 0) {
             erasefail_address = strtol(main_argv[++i], NULL,  16);
             fprintf(stderr,"Set power fail to erase at address %x\n", erasefail_address);
+            break;
+        }
+        if (strcmp(main_argv[i], "powerfail_state") == 0) {
+            failSlot = atoi(main_argv[++i]);
+            failCount = atoi(main_argv[++i]);
+            fprintf(stderr,
+                "Set power fail to happen when state slot %d is written to after %d slot erasures\n",
+                failSlot, failCount);
             break;
         }
     }
